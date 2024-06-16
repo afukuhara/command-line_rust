@@ -1,7 +1,8 @@
 use clap::{App, Arg};
+use std::collections::btree_map::Range;
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader};
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
 
@@ -78,12 +79,14 @@ pub fn run(config: Config) -> MyResult<()> {
     let files = config.files;
     let has_multple_files = files.len() > 1;
 
-    for (file_num, filename) in files.iter().enumerate() {
+    let mut is_first = true;
+
+    for filename in files {
         match open(&filename) {
             Err(err) => eprintln!("{}: {}", filename, err),
             Ok(reader) => {
                 if has_multple_files {
-                    if file_num > 0 {
+                    if !is_first {
                         println!("");
                     }
                     println!("==> {} <==", filename)
@@ -91,11 +94,15 @@ pub fn run(config: Config) -> MyResult<()> {
                 match config.bytes {
                     Some(num) => {
                         let _ = read_file_with_bytes(reader, num);
+                        // println!("{}", content);
                     }
                     None => {
                         let _ = read_lines(reader, config.lines);
+                        // println!("{}", content);
                     }
                 }
+
+                is_first = false;
             }
         }
     }
@@ -118,26 +125,33 @@ fn open(filename: &str) -> MyResult<Box<dyn BufRead>> {
 }
 
 fn read_file_with_bytes(mut reader: Box<dyn BufRead>, bytes: usize) -> MyResult<()> {
-    let mut handle = reader.take(bytes as u64);
     let mut buffer = vec![0; bytes];
-    let bytes_read = handle.read(&mut buffer)?;
+    let mut bytes_read = 0;
 
-    print!("{}", String::from_utf8_lossy(&buffer[..bytes_read]));
+    while bytes_read < bytes {
+        let read_count = reader.read(&mut buffer[bytes_read..])?;
+        if read_count == 0 {
+            break;
+        }
+        bytes_read += read_count;
+    }
+
+    let content = String::from_utf8_lossy(&buffer[..bytes_read]);
+    print!("{}", content);
 
     Ok(())
 }
 
-fn read_lines(mut reader: Box<dyn BufRead>, line_num: usize) -> MyResult<()> {
-    let mut line = String::new();
-    for _ in 0..line_num {
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
+fn read_lines(reader: Box<dyn BufRead>, line_num: usize) -> MyResult<()> {
+    let mut i = 1;
+    for line in reader.lines() {
+        if i > line_num {
             break;
         }
-        print!("{}", line);
-        line.clear();
-    }
 
+        println!("{}", line.unwrap());
+        i += 1;
+    }
     Ok(())
 }
 
