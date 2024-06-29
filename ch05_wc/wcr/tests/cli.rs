@@ -33,7 +33,7 @@ fn dies_chars_and_bytes() -> Result<()> {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "the argument '--chars' cannot be used with '--bytes'",
+            "The argument '--chars' cannot be used with '--bytes'",
         ));
     Ok(())
 }

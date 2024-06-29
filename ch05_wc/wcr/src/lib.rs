@@ -91,50 +91,46 @@ pub fn get_args() -> MyResult<Config> {
 }
 
 pub fn run(config: Config) -> MyResult<()> {
-    let mut total = FileInfo {
-        num_lines: 0,
-        num_words: 0,
-        num_bytes: 0,
-        num_chars: 0,
-    };
+    let mut total_lines = 0;
+    let mut total_words = 0;
+    let mut total_bytes = 0;
+    let mut total_chars = 0;
 
-    let filenum = config.files.len();
-    let total_config = config.clone();
-    let files = config.files.clone();
-
-    for filename in files {
-        match open(&filename) {
+    for filename in &config.files {
+        match open(filename) {
             Err(err) => eprint!("Failed to open {}: {}", filename, err),
-            Ok(reader) => {
-                let fileinfo = count(reader).unwrap();
-                print_result(&config, &fileinfo, &filename);
-                // let mut output = String::new();
+            Ok(file) => {
+                if let Ok(info) = count(file) {
+                    println!(
+                        "{}{}{}{}{}",
+                        format_field(info.num_lines, config.lines),
+                        format_field(info.num_words, config.words),
+                        format_field(info.num_bytes, config.bytes),
+                        format_field(info.num_chars, config.chars),
+                        if filename.as_str() == "-" {
+                            "".to_string()
+                        } else {
+                            format!(" {}", filename)
+                        }
+                    );
 
-                // if config.lines {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_lines));
-                // }
-                // if config.words {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_words));
-                // }
-                // if config.bytes {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_bytes));
-                // }
-
-                // if config.chars {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_chars));
-                // }
-
-                // if !output.is_empty() {
-                //     println!("{} {}", output, filename);
-                // }
-
-                total = plus_fileinfo(&total, &fileinfo)?;
+                    total_lines += info.num_lines;
+                    total_words += info.num_words;
+                    total_bytes += info.num_bytes;
+                    total_chars += info.num_chars;
+                }
             }
         }
     }
 
-    if filenum > 1 {
-        print_result(&total_config, &total, "total");
+    if config.files.len() > 1 {
+        println!(
+            "{}{}{}{} total",
+            format_field(total_lines, config.lines),
+            format_field(total_words, config.words),
+            format_field(total_bytes, config.bytes),
+            format_field(total_chars, config.chars),
+        )
     }
 
     Ok(())
@@ -147,40 +143,33 @@ fn open(filename: &str) -> MyResult<Box<dyn BufRead>> {
     }
 }
 
-fn print_result(config: &Config, fileinfo: &FileInfo, filename: &str) {
-    let mut output = String::new();
-
-    if config.lines {
-        output.push_str(&format!("{:>8}", fileinfo.num_lines));
-    }
-    if config.words {
-        output.push_str(&format!("{:>8}", fileinfo.num_words));
-    }
-    if config.bytes {
-        output.push_str(&format!("{:>8}", fileinfo.num_bytes));
-    }
-
-    if config.chars {
-        output.push_str(&format!("{:>8}", fileinfo.num_chars));
-    }
-
-    if !output.is_empty() {
-        println!("{} {}", output, filename);
+fn format_field(value: usize, show: bool) -> String {
+    if show {
+        format!("{:>8}", value)
+    } else {
+        "".to_string()
     }
 }
 
 pub fn count(mut file: impl BufRead) -> MyResult<FileInfo> {
-    let reader = BufReader::new(file.fill_buf()?);
-    let num_lines = count_lines(reader);
+    let mut num_lines = 0;
+    let mut num_words = 0;
+    let mut num_bytes = 0;
+    let mut num_chars = 0;
+    let mut line = String::new();
 
-    let reader = BufReader::new(file.fill_buf()?);
-    let num_words = count_words(reader);
+    loop {
+        let line_bytes = file.read_line(&mut line)?;
+        if line_bytes == 0 {
+            break;
+        }
 
-    let reader = BufReader::new(file.fill_buf()?);
-    let num_bytes = count_bytes(reader);
-
-    let reader = BufReader::new(file.fill_buf()?);
-    let num_chars = count_chars(reader);
+        num_bytes += line_bytes;
+        num_lines += 1;
+        num_words += line.split_whitespace().count();
+        num_chars += line.chars().count();
+        line.clear();
+    }
 
     Ok(FileInfo {
         num_lines,
@@ -188,36 +177,6 @@ pub fn count(mut file: impl BufRead) -> MyResult<FileInfo> {
         num_bytes,
         num_chars,
     })
-}
-
-fn plus_fileinfo(a: &FileInfo, b: &FileInfo) -> MyResult<FileInfo> {
-    Ok(FileInfo {
-        num_lines: a.num_lines + b.num_lines,
-        num_words: a.num_words + b.num_words,
-        num_bytes: a.num_bytes + b.num_bytes,
-        num_chars: a.num_chars + b.num_bytes,
-    })
-}
-
-fn count_lines(reader: impl BufRead) -> usize {
-    reader.lines().count()
-}
-
-fn count_words(reader: impl BufRead) -> usize {
-    reader
-        .lines()
-        .map(|l| l.unwrap().split_ascii_whitespace().count())
-        .sum()
-}
-
-fn count_bytes(mut reader: impl BufRead) -> usize {
-    let mut buffer = Vec::new();
-    let bytes_read = reader.read_to_end(&mut buffer);
-    bytes_read.unwrap()
-}
-
-fn count_chars(reader: impl BufRead) -> usize {
-    reader.lines().map(|l| l.unwrap().chars().count()).sum()
 }
 
 #[cfg(test)]

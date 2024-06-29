@@ -108,25 +108,6 @@ pub fn run(config: Config) -> MyResult<()> {
             Ok(reader) => {
                 let fileinfo = count(reader).unwrap();
                 print_result(&config, &fileinfo, &filename);
-                // let mut output = String::new();
-
-                // if config.lines {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_lines));
-                // }
-                // if config.words {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_words));
-                // }
-                // if config.bytes {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_bytes));
-                // }
-
-                // if config.chars {
-                //     output.push_str(&format!("{:>8}", fileinfo.num_chars));
-                // }
-
-                // if !output.is_empty() {
-                //     println!("{} {}", output, filename);
-                // }
 
                 total = plus_fileinfo(&total, &fileinfo)?;
             }
