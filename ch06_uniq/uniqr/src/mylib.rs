@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 use std::{
+    collections::BTreeMap,
     error::Error,
     fs::File,
     io::{self, BufRead, BufReader, Write},
@@ -12,6 +13,48 @@ pub struct Config {
     in_file: String,
     out_file: Option<String>,
     count: bool,
+}
+
+enum Writer {
+    Stdout(io::Stdout),
+    File(File),
+}
+
+impl Write for Writer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Writer::Stdout(out) => out.write(buf),
+            Writer::File(file) => file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Writer::Stdout(out) => out.flush(),
+            Writer::File(file) => file.flush(),
+        }
+    }
+}
+
+fn write_data(writer: &mut Writer, data: &str) -> io::Result<()> {
+    write!(writer, "{}", data)
+}
+
+fn output(out_file: Option<String>, content: &str) -> io::Result<()> {
+    match out_file {
+        Some(file_path) => {
+            let file = File::create(file_path)?;
+            let mut writer = Writer::File(file);
+            write_data(&mut writer, content)?;
+            writer.flush()?;
+        }
+        None => {
+            let mut stdout = Writer::Stdout(io::stdout());
+            write_data(&mut stdout, content)?;
+            stdout.flush()?;
+        }
+    }
+    Ok(())
 }
 
 pub fn get_args() -> MyResult<Config> {
@@ -51,26 +94,8 @@ pub fn get_args() -> MyResult<Config> {
 pub fn run(config: Config) -> MyResult<()> {
     let mut file = open(&config.in_file).map_err(|e| format!("{}: {}", config.in_file, e))?;
 
-    let mut out_file: Box<dyn Write> = match &config.out_file {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-
     let mut line = String::new();
-    let mut previous = String::new();
-    let mut count: u64 = 0;
-
-    let mut print = |count: u64, text: &str| -> MyResult<()> {
-        if count > 0 {
-            if config.count {
-                write!(out_file, "{:>4} {}", count, text)?;
-            } else {
-                write!(out_file, "{}", text)?;
-            }
-        };
-
-        Ok(())
-    };
+    let mut map: BTreeMap<String, u32> = BTreeMap::new();
 
     loop {
         let bytes = file.read_line(&mut line)?;
@@ -78,17 +103,25 @@ pub fn run(config: Config) -> MyResult<()> {
             break;
         }
 
-        if line.trim_end() != previous.trim_end() {
-            print(count, &previous)?;
-            previous.clone_from(&line);
-            count = 0;
-        }
+        //        let trimmed_line = line.trim_end();
+        *map.entry(line.to_string()).or_insert(0) += 1;
 
-        count += 1;
         line.clear();
     }
 
-    print(count, &previous)?;
+    let mut output_lines: Vec<String> = Vec::new();
+
+    for (k, v) in &map {
+        if config.count {
+            output_lines.push(format!("{:>4} {}", v, k));
+        } else {
+            output_lines.push(format!("{}", k));
+        }
+    }
+
+    //    output_lines.push(format!("{}", "\n"));
+    let _ = output(config.out_file, &output_lines.join("\n"));
+
     Ok(())
 }
 
