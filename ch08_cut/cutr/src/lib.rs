@@ -106,15 +106,55 @@ pub fn get_args() -> MyResult<Config> {
 }
 
 pub fn run(config: Config) -> MyResult<()> {
-    // println!("{:#?}", config);
     for filename in &config.files {
         match open(filename) {
             Err(err) => eprint!("{}: {}", filename, err),
-            Ok(_) => println!("Opened {}", filename),
+            //            Ok(_) => println!("Opened {}", filename),
+            Ok(mut reader) => match config.extract {
+                Bytes(ref byte_pos) => loop {
+                    let mut line = String::new();
+                    let line_bytes = reader.read_line(&mut line)?;
+                    if line_bytes == 0 {
+                        break;
+                    }
+
+                    let byte_result: String = extract_bytes(&line, &byte_pos);
+                    println!("{}", byte_result);
+                },
+                Chars(ref char_pos) => loop {
+                    let mut line = String::new();
+                    let line_bytes = reader.read_line(&mut line)?;
+                    if line_bytes == 0 {
+                        break;
+                    }
+
+                    let char_result = extract_chars(&line, &char_pos);
+                    println!("{}", char_result);
+                },
+                Fields(_) => {
+                    unimplemented!()
+                }
+            },
         }
     }
     Ok(())
 }
+
+// fn process_lines<F>(reader: &mut impl BufRead, mut process_line: F) -> Result<()>
+// where
+//     F: FnMut(&str) -> String,
+// {
+//     loop {
+//         let mut line = String::new();
+//         let line_bytes = reader.read_line(&mut line)?;
+//         if line_bytes == 0 {
+//             break;
+//         }
+//         let result = process_line(&line);
+//         println!("{}", result);
+//     }
+//     Ok(())
+// }
 
 fn parse_pos(range: &str) -> MyResult<PositionList> {
     let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
@@ -164,16 +204,29 @@ fn open(filename: &str) -> MyResult<Box<dyn BufRead>> {
 }
 
 fn extract_chars(line: &str, char_pos: &[Range<usize>]) -> String {
-    line.chars()
-        .enumerate()
-        .filter(|(i, _)| char_pos.iter().any(|range| range.contains(i)))
-        .map(|(_, c)| c)
+    char_pos
+        .iter()
+        .flat_map(|range| {
+            line.chars() // char_indices() の代わりに chars() を使用
+                .skip(range.start)
+                .take(range.end.saturating_sub(range.start))
+        })
         .collect()
+
+    // line.chars()
+    //     .enumerate()
+    //     .filter(|(i, _)| char_pos.iter().any(|range| range.contains(i)))
+    //     .map(|(_, c)| c)
+    //     .collect()
 }
 
 fn extract_bytes(line: &str, byte_pos: &[Range<usize>]) -> String {
-    // line.as_bytes()
-    unimplemented!();
+    let bytes: Vec<u8> = byte_pos
+        .iter()
+        .flat_map(|range| line.as_bytes().get(range.clone()).unwrap_or(&[]).to_vec())
+        .collect();
+
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]
