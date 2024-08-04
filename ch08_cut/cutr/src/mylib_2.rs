@@ -1,6 +1,6 @@
 use crate::Extract::*;
 use clap::{App, Arg};
-use csv::{ReaderBuilder, StringRecord, WriterBuilder};
+use csv::{ReaderBuilder, StringRecord};
 use regex::Regex;
 use std::{
     error::Error,
@@ -110,30 +110,35 @@ pub fn run(config: Config) -> MyResult<()> {
     for filename in &config.files {
         match open(filename) {
             Err(err) => eprint!("{}: {}", filename, err),
-            Ok(file) => match &config.extract {
+            Ok(mut reader) => match config.extract {
+                Bytes(ref byte_pos) => loop {
+                    let mut line = String::new();
+                    let line_bytes = reader.read_line(&mut line)?;
+                    if line_bytes == 0 {
+                        break;
+                    }
+
+                    let result: String = extract_bytes(&line, byte_pos);
+                    println!("{}", result);
+                },
+                Chars(ref char_pos) => loop {
+                    let mut line = String::new();
+                    let line_bytes = reader.read_line(&mut line)?;
+                    if line_bytes == 0 {
+                        break;
+                    }
+
+                    let result = extract_chars(&line, char_pos);
+                    println!("{}", result);
+                },
                 Fields(ref field_pos) => {
                     let mut reader = ReaderBuilder::new()
                         .has_headers(false)
                         .delimiter(config.delimiter)
-                        .from_reader(file);
-
-                    let mut wtr = WriterBuilder::new()
-                        .delimiter(config.delimiter)
-                        .from_writer(io::stdout());
-
+                        .from_reader(reader);
                     for record in reader.records() {
-                        let record = record?;
-                        wtr.write_record(extract_fields(&record, field_pos))?;
-                    }
-                }
-                Bytes(byte_pos) => {
-                    for line in file.lines() {
-                        println!("{}", extract_bytes(&line?, &byte_pos));
-                    }
-                }
-                Chars(char_pos) => {
-                    for line in file.lines() {
-                        println!("{}", extract_chars(&line?, &char_pos));
+                        let results = extract_fields(&record?, field_pos);
+                        println!("{}", results.join(&(config.delimiter as char).to_string()));
                     }
                 }
             },
@@ -189,22 +194,20 @@ fn open(filename: &str) -> MyResult<Box<dyn BufRead>> {
 }
 
 fn extract_chars(line: &str, char_pos: &[Range<usize>]) -> String {
-    let chars: Vec<_> = line.chars().collect();
-
     char_pos
         .iter()
-        .cloned()
-        .flat_map(|range| range.filter_map(|i| chars.get(i)))
+        .flat_map(|range| {
+            line.chars() // char_indices() の代わりに chars() を使用
+                .skip(range.start)
+                .take(range.end.saturating_sub(range.start))
+        })
         .collect()
 }
 
 fn extract_bytes(line: &str, byte_pos: &[Range<usize>]) -> String {
-    let bytes = line.as_bytes();
-
-    let bytes: Vec<_> = byte_pos
+    let bytes: Vec<u8> = byte_pos
         .iter()
-        .cloned()
-        .flat_map(|range| range.filter_map(|i| bytes.get(i)).copied())
+        .flat_map(|range| line.as_bytes().get(range.clone()).unwrap_or(&[]).to_vec())
         .collect();
 
     String::from_utf8_lossy(&bytes).into_owned()
@@ -213,10 +216,14 @@ fn extract_bytes(line: &str, byte_pos: &[Range<usize>]) -> String {
 fn extract_fields(record: &StringRecord, field_pos: &[Range<usize>]) -> Vec<String> {
     field_pos
         .iter()
-        .cloned()
-        .flat_map(|range| range.filter_map(|i| record.get(i)))
-        .map(String::from)
-        .collect()
+        .flat_map(|range| {
+            record
+                .iter()
+                .enumerate()
+                .filter(|(i, _v)| range.contains(i))
+                .map(|(_, f)| f.to_string())
+        })
+        .collect::<Vec<String>>()
 }
 
 #[cfg(test)]
