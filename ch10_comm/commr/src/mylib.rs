@@ -1,10 +1,9 @@
-use crate::Column::*;
 use clap::{App, Arg};
-use std::cmp::Ordering::*;
 use std::{
     error::Error,
     fs::File,
     io::{self, BufRead, BufReader},
+    vec,
 };
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
@@ -18,12 +17,6 @@ pub struct Config {
     show_col3: bool,
     insensitive: bool,
     delimiter: String,
-}
-
-enum Column<'a> {
-    Col1(&'a str),
-    Col2(&'a str),
-    Col3(&'a str),
 }
 
 pub fn get_args() -> MyResult<Config> {
@@ -92,6 +85,8 @@ pub fn get_args() -> MyResult<Config> {
 }
 
 pub fn run(config: Config) -> MyResult<()> {
+    //    println!("{:#?}", config);
+
     let file1 = &config.file1;
     let file2 = &config.file2;
 
@@ -99,80 +94,80 @@ pub fn run(config: Config) -> MyResult<()> {
         return Err(From::from("Both input files cannot be STDIN (\"-\")"));
     }
 
-    let case = |line: String| {
-        if config.insensitive {
-            line.to_lowercase()
-        } else {
-            line
-        }
-    };
+    let _file1 = open(file1)?;
+    let _file2 = open(file2)?;
 
-    let print = |col: Column| {
-        let mut columns = vec![];
-        match col {
-            Col1(val) => {
-                if config.show_col1 {
-                    columns.push(val);
-                }
-            }
-            Col2(val) => {
-                if config.show_col2 {
-                    if config.show_col1 {
-                        columns.push("");
-                    }
-                    columns.push(val);
-                }
-            }
-            Col3(val) => {
-                if config.show_col3 {
-                    if config.show_col1 {
-                        columns.push("");
-                    }
-                    if config.show_col2 {
-                        columns.push("");
-                    }
-                    columns.push(val);
-                }
-            }
+    let mut file1_lines = _file1.lines();
+    let mut file2_lines = _file2.lines();
+
+    let mut cols: Vec<Vec<String>> = vec![];
+
+    let mut line1: Option<String> = file1_lines.next().transpose()?;
+    let mut line2: Option<String> = file2_lines.next().transpose()?;
+
+    loop {
+        if line1.is_none() && line2.is_none() {
+            break;
         }
 
-        if !columns.is_empty() {
-            println!("{}", columns.join(&config.delimiter));
+        match (line1.clone(), line2.clone()) {
+            (Some(some_line1), None) => {
+                cols.push(vec![some_line1.clone(), "".to_string(), "".to_string()]);
+
+                line1 = file1_lines.next().transpose()?;
+            }
+            (None, Some(some_line2)) => {
+                cols.push(vec!["".to_string(), some_line2.clone(), "".to_string()]);
+
+                line2 = file2_lines.next().transpose()?;
+            }
+            (Some(some_line1), Some(some_line2)) => {
+                if config.insensitive {
+                    line1 = line1.map(|s| s.to_lowercase());
+                    line2 = line2.map(|s| s.to_lowercase());
+                }
+
+                if line1 == line2 {
+                    cols.push(vec!["".to_string(), "".to_string(), some_line1.clone()]);
+
+                    line1 = file1_lines.next().transpose()?;
+                    line2 = file2_lines.next().transpose()?;
+                } else if line1 < line2 {
+                    cols.push(vec![some_line1.clone(), "".to_string(), "".to_string()]);
+
+                    line1 = file1_lines.next().transpose()?;
+                } else if line1 > line2 {
+                    cols.push(vec!["".to_string(), some_line2.clone(), "".to_string()]);
+
+                    line2 = file2_lines.next().transpose()?;
+                }
+            }
+            _ => unreachable!(),
         }
-    };
+    }
 
-    let mut lines1 = open(file1)?.lines().map_while(Result::ok).map(case);
-    let mut lines2 = open(file2)?.lines().map_while(Result::ok).map(case);
+    for val in cols.iter() {
+        let mut output = String::new();
+        if config.show_col1 {
+            output.push_str(&val[0]);
 
-    let mut line1 = lines1.next();
-    let mut line2 = lines2.next();
-
-    while line1.is_some() || line2.is_some() {
-        match (&line1, &line2) {
-            (Some(val1), Some(val2)) => match val1.cmp(val2) {
-                Equal => {
-                    print(Col3(val1));
-                    line1 = lines1.next();
-                    line2 = lines2.next();
-                }
-                Less => {
-                    print(Col1(val1));
-                    line1 = lines1.next();
-                }
-                Greater => {
-                    print(Col2(val2));
-                    line2 = lines2.next();
-                }
-            },
-            (Some(val1), None) => {
-                print(Col1(val1));
-                line1 = lines1.next();
+            if (config.show_col2 && &val[1] != "") || (config.show_col3 && &val[2] != "") {
+                output.push_str(config.delimiter.as_str());
             }
-            (None, Some(val2)) => {
-                print(Col2(val2));
-                line2 = lines2.next();
+        }
+        if config.show_col2 {
+            output.push_str(&val[1]);
+
+            if config.show_col3 && &val[2] != "" {
+                output.push_str(config.delimiter.as_str());
             }
-            _ => (),
+        }
+        if config.show_col3 && &val[2] != "" {
+            output.push_str(&val[2]);
+        }
+
+        if !output.is_empty() {
+            println!("{}", output);
         }
     }
 
