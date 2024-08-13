@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fs::File,
     io::{self, BufRead, BufReader},
+    vec,
 };
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
@@ -75,16 +76,16 @@ pub fn get_args() -> MyResult<Config> {
     Ok(Config {
         file1: matches.value_of_lossy("file1").unwrap().to_string(),
         file2: matches.value_of_lossy("file2").unwrap().to_string(),
-        show_col1: matches.is_present("suppress1"),
-        show_col2: matches.is_present("suppress2"),
-        show_col3: matches.is_present("suppress3"),
+        show_col1: !matches.is_present("suppress1"),
+        show_col2: !matches.is_present("suppress2"),
+        show_col3: !matches.is_present("suppress3"),
         insensitive: matches.is_present("insensitive"),
         delimiter: matches.value_of_lossy("delimiter").unwrap().to_string(),
     })
 }
 
 pub fn run(config: Config) -> MyResult<()> {
-    println!("{:#?}", config);
+    //    println!("{:#?}", config);
 
     let file1 = &config.file1;
     let file2 = &config.file2;
@@ -95,25 +96,78 @@ pub fn run(config: Config) -> MyResult<()> {
 
     let _file1 = open(file1)?;
     let _file2 = open(file2)?;
-    println!("Opened {} and {}", file1, file2);
 
-    let mut file1_lines = file1.lines();
-    let mut file2_lines = file2.lines();
+    let mut file1_lines = _file1.lines();
+    let mut file2_lines = _file2.lines();
 
-    match (file1_lines.next(), file2_lines.next()) {
-        (Some(line1), Some(line2)) => {
-            if line1 == line2 {
-                println!("{}", line1);
+    let mut cols: Vec<Vec<String>> = vec![];
+
+    let mut line1: Option<String> = file1_lines.next().transpose()?;
+    let mut line2: Option<String> = file2_lines.next().transpose()?;
+
+    loop {
+        if line1.is_none() && line2.is_none() {
+            break;
+        }
+
+        match (line1.clone(), line2.clone()) {
+            (Some(some_line1), None) => {
+                cols.push(vec![some_line1.clone(), "".to_string(), "".to_string()]);
+
+                line1 = file1_lines.next().transpose()?;
             }
-            else if line1 < line2 {
-                println!("{}", line1);
+            (None, Some(some_line2)) => {
+                cols.push(vec!["".to_string(), some_line2.clone(), "".to_string()]);
+
+                line2 = file2_lines.next().transpose()?;
             }
-            else if line1 > line2    {
-                println!("{}", line2);
+            (Some(some_line1), Some(some_line2)) => {
+                if config.insensitive {
+                    line1 = line1.map(|s| s.to_lowercase());
+                    line2 = line2.map(|s| s.to_lowercase());
+                }
+
+                if line1 == line2 {
+                    cols.push(vec!["".to_string(), "".to_string(), some_line1.clone()]);
+
+                    line1 = file1_lines.next().transpose()?;
+                    line2 = file2_lines.next().transpose()?;
+                } else if line1 < line2 {
+                    cols.push(vec![some_line1.clone(), "".to_string(), "".to_string()]);
+
+                    line1 = file1_lines.next().transpose()?;
+                } else if line1 > line2 {
+                    cols.push(vec!["".to_string(), some_line2.clone(), "".to_string()]);
+
+                    line2 = file2_lines.next().transpose()?;
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    for val in cols.iter() {
+        let mut output = String::new();
+        if config.show_col1 {
+            output.push_str(&val[0]);
+
+            if (config.show_col2 && &val[1] != "") || (config.show_col3 && &val[2] != "") {
+                output.push_str(config.delimiter.as_str());
             }
         }
-        _ => {
-            println!("EOF");
+        if config.show_col2 {
+            output.push_str(&val[1]);
+
+            if config.show_col3 && &val[2] != "" {
+                output.push_str(config.delimiter.as_str());
+            }
+        }
+        if config.show_col3 && &val[2] != "" {
+            output.push_str(&val[2]);
+        }
+
+        if !output.is_empty() {
+            println!("{}", output);
         }
     }
 
