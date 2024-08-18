@@ -91,20 +91,23 @@ pub fn run(config: Config) -> MyResult<()> {
             Err(e) => eprintln!("{}: {}", filename, e),
             Ok(file) => {
                 if !config.quiet && has_multple_files {
-                    println!(
-                        "{}==> {} <==",
-                        if file_num > 0 { "\n" } else { "" },
-                        filename
-                    );
+                    if file_num > 0 {
+                        println!();
+                    }
+                    println!("==> {} <==", filename);
                 }
 
                 let (total_lines, total_bytes) = count_lines_bytes(filename)?;
-                let file = BufReader::new(file);
-                if let Some(ref n) = config.bytes {
-                    print_bytes(file, n, total_bytes)?;
+                let reader = BufReader::new(file);
+                let result = if let Some(ref n) = config.bytes {
+                    print_bytes(reader, n, total_bytes)
                 } else {
-                    print_lines(file, &config.lines, total_lines)?;
+                    print_lines(reader, &config.lines, total_lines)
                 };
+
+                if let Err(e) = result {
+                    eprintln!("{}: {}", filename, e);
+                }
             }
         }
     }
@@ -135,41 +138,46 @@ fn parse_num(val: &str) -> MyResult<TakeValue> {
 fn count_lines_bytes(filename: &str) -> MyResult<(i64, i64)> {
     let mut file = BufReader::new(File::open(filename)?);
 
-    let mut num_lines: i64 = 0;
-    let mut num_bytes: i64 = 0;
-    let mut buf = Vec::new();
+    let mut line = String::new();
+    let mut line_count: i64 = 0;
+    let mut byte_count: i64 = 0;
 
     loop {
-        let bytes_read = file.read_until(b'\n', &mut buf)?;
-        if bytes_read == 0 {
+        let bytes = file.read_line(&mut line)?;
+        if bytes == 0 {
             break;
         }
 
-        num_lines += 1;
-        num_bytes += bytes_read as i64;
-        buf.clear();
+        line_count += 1;
+        byte_count += bytes as i64;
+        line.clear();
     }
 
-    Ok((num_lines, num_bytes))
+    Ok((line_count, byte_count))
 }
 
 fn print_lines(mut file: impl BufRead, num_lines: &TakeValue, total_lines: i64) -> MyResult<()> {
-    if let Some(start) = get_start_index(num_lines, total_lines) {
-        let mut buf = Vec::new();
-        let mut line_num = 0;
-        loop {
-            let bytes_read = file.read_until(b'\n', &mut buf)?;
-            if bytes_read == 0 {
-                break;
+    let start_index = get_start_index(num_lines, total_lines);
+
+    match start_index {
+        Some(start_index) => {
+            let mut line = String::new();
+            let mut count = 0;
+            loop {
+                let bytes = file.read_line(&mut line)?;
+                if bytes == 0 {
+                    break;
+                }
+                if count >= start_index {
+                    print!("{}", line);
+                }
+                count += 1;
+                line.clear();
             }
-            if line_num >= start {
-                print!("{}", String::from_utf8_lossy(&buf));
-            }
-            line_num += 1;
-            buf.clear();
+            Ok(())
         }
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn print_bytes<T: Read + Seek>(
@@ -177,33 +185,36 @@ fn print_bytes<T: Read + Seek>(
     num_bytes: &TakeValue,
     total_bytes: i64,
 ) -> MyResult<()> {
-    if let Some(start) = get_start_index(num_bytes, total_bytes) {
-        file.seek(SeekFrom::Start(start))?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        if !buffer.is_empty() {
+    let start_index = get_start_index(num_bytes, total_bytes);
+
+    match start_index {
+        Some(start_index) => {
+            file.seek(SeekFrom::Start(start_index))?;
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer)?;
             print!("{}", String::from_utf8_lossy(&buffer));
+            Ok(())
         }
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn get_start_index(take_val: &TakeValue, total: i64) -> Option<u64> {
+    if total <= 0 {
+        return None;
+    }
+
     match take_val {
-        PlusZero => {
-            if total > 0 {
-                Some(0)
-            } else {
+        PlusZero => Some(0),
+        TakeNum(n) => {
+            let num = *n;
+            if num > total || num == 0 {
                 None
-            }
-        }
-        TakeNum(num) => {
-            let num = *num;
-            if num == 0 || total == 0 || num > total {
-                None
+            } else if num > 0 {
+                Some((num - 1) as u64)
             } else {
-                let start = if num < 0 { total + num } else { num - 1 };
-                Some(if start < 0 { 0 } else { start as u64 })
+                let answer = if total + num < 0 { 0 } else { total + num };
+                Some(answer as u64)
             }
         }
     }
