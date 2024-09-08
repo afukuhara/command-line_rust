@@ -34,8 +34,8 @@ fn gen_bad_file() -> String {
 // --------------------------------------------------
 #[test]
 fn dies_not_enough_args() -> Result<()> {
-    let expected = "the following required arguments were not provided:\n  \
-        <FILE>...";
+    let expected = "error: The following required arguments were not provided:
+    <FILE>...";
     Command::cargo_bin(PRG)?
         .assert()
         .failure()
@@ -72,7 +72,7 @@ fn dies_bad_pattern() -> Result<()> {
 #[test]
 fn dies_bad_seed() -> Result<()> {
     let bad = random_string();
-    let expected = format!("invalid value '{bad}' for '--seed <SEED>'");
+    let expected = format!("invalid value \"{bad}\" for '--seed <SEED>'");
     Command::cargo_bin(PRG)?
         .args([LITERATURE, "--seed", &bad])
         .assert()

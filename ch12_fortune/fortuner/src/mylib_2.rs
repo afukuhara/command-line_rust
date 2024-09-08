@@ -1,15 +1,10 @@
 use clap::{App, Arg};
-use rand::prelude::SliceRandom;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::prelude::*;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use regex::{Regex, RegexBuilder};
-use std::vec;
-use std::{
-    error::Error,
-    ffi::OsStr,
-    fs::{self, File},
-    io::{BufRead, BufReader},
-    path::PathBuf,
-};
+use std::error::Error;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
@@ -85,85 +80,76 @@ fn parse_u64(val: &str) -> MyResult<u64> {
 }
 
 fn find_files(paths: &[String]) -> MyResult<Vec<PathBuf>> {
-    let dat = OsStr::new("dat");
-    let mut files = vec![];
+    let mut entries = paths
+        .iter()
+        .flat_map(|path| {
+            WalkDir::new(path)
+                .into_iter()
+                .map(|entry| entry.map(|e| e.into_path()))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect::<Vec<_>>();
 
-    for path in paths {
-        match fs::metadata(path) {
-            Err(e) => return Err(format!("{}: {}", path, e).into()),
-            Ok(_) => files.extend(
-                WalkDir::new(path)
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .filter(|e| e.file_type().is_file() && e.path().extension() != Some(dat))
-                    .map(|e| e.path().into()),
-            ),
-        }
-    }
-
-    files.sort();
-    files.dedup();
-    Ok(files)
+    entries.sort();
+    entries.dedup();
+    Ok(entries)
 }
 
 fn read_fortunes(paths: &[PathBuf]) -> MyResult<Vec<Fortune>> {
-    let mut fortunes = vec![];
-    let mut buffer = vec![];
+    let mut fortunes = Vec::new();
 
     for path in paths {
-        let basename = path.file_name().unwrap().to_string_lossy().into_owned();
-
-        let file = File::open(path)
-            .map_err(|e| format!("{}: {}", path.to_string_lossy().into_owned(), e))?;
-
-        for line in BufReader::new(file).lines().filter_map(Result::ok) {
-            if line == "%" {
-                if !buffer.is_empty() {
-                    fortunes.push(Fortune {
-                        source: basename.clone(),
-                        text: buffer.join("\n"),
-                    });
-                    buffer.clear();
-                }
-            } else {
-                buffer.push(line.to_string());
-            }
-        }
+        let content = std::fs::read_to_string(path)?;
+        let mut tmp_fortunes: Vec<Fortune> = content
+            .split('%')
+            .map(|t| Fortune {
+                source: path.to_string_lossy().into_owned(),
+                text: t.trim().to_string(),
+            })
+            .filter(|t| !t.text.is_empty())
+            .collect();
+        fortunes.append(&mut tmp_fortunes);
     }
 
     Ok(fortunes)
 }
 
 fn pick_fortune(fortunes: &[Fortune], seed: Option<u64>) -> Option<String> {
-    if let Some(val) = seed {
-        let mut rng = StdRng::seed_from_u64(val);
-        fortunes.choose(&mut rng).map(|f| f.text.to_string())
+    let mut rng: StdRng = if let Some(seed) = seed {
+        SeedableRng::seed_from_u64(seed)
     } else {
-        let mut rng = rand::thread_rng();
-        fortunes.choose(&mut rng).map(|f| f.text.to_string())
+        SeedableRng::from_entropy()
+    };
+
+    if fortunes.is_empty() {
+        None
+    } else {
+        Some(fortunes.choose(&mut rng)?.text.clone())
     }
 }
 
 pub fn run(config: Config) -> MyResult<()> {
     let files = find_files(&config.sources)?;
     let fortunes = read_fortunes(&files)?;
+    let mut found = false;
 
     if let Some(pattern) = config.pattern {
-        let mut prev_source = None;
-        for fortune in fortunes.iter().filter(|f| pattern.is_match(&f.text)) {
-            if prev_source.as_ref().map_or(true, |s| s != &fortune.source) {
-                eprintln!("({})\n%", fortune.source);
-                prev_source = Some(fortune.source.clone());
+        for fortune in fortunes.iter() {
+            if pattern.is_match(&fortune.text) {
+                println!("{}", fortune.text);
+                found = true;
             }
-            println!("{}\n%", fortune.text);
+        }
+
+        if !found {
+            eprintln!("No fortunes found");
         }
     } else {
-        println!(
-            "{}",
-            pick_fortune(&fortunes, config.seed)
-                .or_else(|| Some("No fortunes found".to_string()))
-                .unwrap()
-        );
+        if let Some(fortune) = pick_fortune(&fortunes, config.seed) {
+            println!("{}", fortune);
+        }
     }
 
     Ok(())
